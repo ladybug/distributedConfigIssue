@@ -1,0 +1,6 @@
+# your config goes here
+greeting:
+  prefix: 'Howdy'
+endpoints:
+  refresh:
+    sensitive: false

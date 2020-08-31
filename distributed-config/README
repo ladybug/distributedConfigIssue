@@ -1,0 +1,9 @@
+To build the lab documentation run the following:
+
+    ./gradlew asciidoctor
+
+On Windows:
+
+    gradlew asciidoctor
+
+The generated documentation should be at build/docs/asciidoc/index.html.

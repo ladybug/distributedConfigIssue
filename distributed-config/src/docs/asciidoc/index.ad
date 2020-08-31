@@ -1,0 +1,222 @@
+= Lab Instructions
+:icons: font
+
+== Files Of Interest
+- `src/main/java/distributed/config/GreetingController.java`
+- `src/main/java/distributed/config/GreetingHelper.java` (needs to be created)
+- `src/main/resources/application.yml`
+- `src/main/resources/bootstrap.yml`
+- `build.gradle`
+
+== Introduction
+
+The app contains a trivial controller which will render a greeting.
+
+[source,java]
+.src/main/java/distributed/config/GreetingController.java
+----
+include::src/main/java/distributed/config/GreetingController.java[indent=0]
+----
+
+Run the application.
+
+----
+$ ./gradlew run
+
+> Task :compileJava
+Note: Creating bean classes for 1 type elements
+
+> Task :run
+13:45:17.806 [main] INFO  i.m.context.DefaultBeanContext - Reading Startup environment from bootstrap.yml
+13:45:19.478 [main] INFO  i.m.d.c.c.DistributedPropertySourceLocator - Resolved 0 configuration sources from client: compositeConfigurationClient(consul)
+13:45:19.952 [main] INFO  io.micronaut.runtime.Micronaut - Startup completed in 1232ms. Server Running: http://localhost:8080
+
+----
+
+NOTE: Make sure Consul is running (`docker run -p 8500:8500 consul`).
+If Consul is not running the application will fail to start.
+
+Send requests to the application to verify expected results (use
+curl, a web browser, or any HTTP request client).
+
+----
+ $ curl http://localhost:8080/greeting/Jeff && echo ""
+Hello Jeff
+ $
+ $ curl http://localhost:8080/greeting/Jake && echo ""
+Hello Jake
+ $
+ $ curl http://localhost:8080/greeting/Zack && echo ""
+Hello Zack
+----
+
+The goal of this exercise is to externalize the prefix
+that will be used in the greeting and to move the greeting
+generation logic out of the controller and move it into
+a helper bean which will be injected into the controller.
+
+== Introduce Helper Bean
+
+Create a new class in `src/main/java/distributed/config/GreetingHelper.java`
+that will contain a method which accepts a name as a parameter
+and returns a greeting.  For example:
+
+[source,java]
+----
+public String createGreeting(String name) {
+    return "Hello " + name;
+}
+----
+
+Configure the class to be a singleton bean in the application
+context by marking the class with `@javax.inject.Singleton`.
+
+Add a constructor to the `GreetingController` class which
+accepts an instance of the `GreetingHelper` as a parameter
+and use the parameter to initialize a corresponding field
+in the `GreetingController` class which the `greet` method
+will delegate to for creating the greeting.
+
+Run the app again and send requests to it in order to verify
+expected behavior.
+
+== Externalize Greeting Prefix
+
+Remove the hardcoded `"Hello "` prefix from the code and
+move its definition to `src/main/resources/application.yml`.
+
+[source,yaml]
+----
+greeting:
+    prefix: 'Some Prefix Here '
+----
+
+Add a field to the `GreetingHelper` class and mark the field
+with `@Value("${greeting.prefix}")`.  This will allow the field's
+value to be dynamically assigned based on what is loaded
+from the application config.  Use the newly added field
+in the `createGreeting(String name)` method to construct
+the greeting.
+
+Run the app again and send requests to it in order to verify
+expected behavior.
+
+== Use Consul As A Distributed Config Server
+
+See `src/main/resources/bootstrap.yml`.
+
+[source,yaml]
+.src/main/resources/bootstrap.yml
+----
+include::src/main/resources/bootstrap.yml[indent=0]
+----
+
+Notice that `micronaut.config-client.enabled` is set
+to `true` which enables the distributed configuration.
+`consul.client.registration.enabled` is set to `false`
+because this service does not need to register itself
+for discovery.  `consul.client.defaultZone` points to
+where the Consul instance is running which will be used
+as a distributed config server.
+
+Arbitrary key/value pairs may be defined in Consul which will
+be loaded and added to the application config.
+
+Load Consul up in the browser at http://localhost:8500.  Select
+the `Key/Value` menu option to navigate to a console where
+key value pairs may be configured.  Start by creating a `config/` folder.
+
+Within the `config/` folder Micronaut will search values within the following folders in order of precedence:
+
+.Configuration Resolution Precedence
+|===
+|Folder|Description
+
+|`/config/application`
+|Configuration shared by all applications
+
+|`/config/application,prod`
+|Configuration shared by all applications for the `prod` environment
+
+|`/config/[APPLICATION_NAME]`
+|Application specific configuration, example `/config/hello-world`
+
+|`/config/[APPLICATION_NAME],prod`
+|Application specific configuration for an environment
+
+|===
+
+The value of `APPLICATION_NAME` is whatever your have configured `micronaut.application.name` to be in `bootstrap.yml`.
+
+Below the `config/` folder create another folder with the application name, which is `distributed-config`.
+Any arbitrary key value pairs may be defined in `config/distributed-config/` and all of those
+values will be loaded and added to the application config.
+
+Define `config/distributed-config/greeting.prefix` and assign it a value.
+
+Run the app again and send requests to it in order to verify
+expected behavior.
+
+== Add Support For Refreshing The Prefix
+
+While the application is running, modify the config value in Consul and you should
+see that the updated value is *not* reflected in the application.  This is because
+the field in `GreetingHelper` is being initialized once, when the bean is initialized,
+and never refreshed.  This can be easily addressed by marking the `GreetingHelper` class
+with the `io.micronaut.runtime.context.scope.Refreshable` annotation.
+The `@Refreshable` annotation instructs the framework to refresh
+this bean any time the application context is refreshed.
+
+Invoking the `/refresh` endpoint is one way to cause the
+application context to be refreshed.  In order to enable
+the `/refresh` endpoint you will need to add a dependency on
+the `io.micronaut:micronaut-management` library in `build.gradle`.
+
+[source,groovy]
+.build.gradle
+----
+// ...
+dependencies {
+    // ...
+
+    runtime "io.micronaut:micronaut-management"
+}
+
+// ...
+----
+
+The endpoint is sensitive by default and will need to be
+made insensitive in `src/main/resources/application.yml`.
+
+[source,yaml]
+.src/main/resources/application.yml
+----
+endpoints:
+  refresh:
+    sensitive: false
+----
+
+Run the app again and send requests to it in order to verify
+expected behavior.  Verify that the expected prefix is being
+loaded from the distributed Consul config.
+
+Change the `greeting.prefix` value in Consul and verify that
+the new value is *not* dynamically reloaded in the app.
+
+Refresh the context by sending a `POST` request to the
+`refresh/` endpoint.
+
+----
+$ curl -i -X POST http://localhost:8080/refresh
+HTTP/1.1 200 OK
+Date: Tue, 23 Jul 2019 19:35:17 GMT
+content-type: application/json
+content-length: 2
+connection: keep-alive
+
+[]
+----
+
+Now send requests to the application and verify that
+the `GreetingHelper` bean has been refreshed with the
+latest config value from Consul.
